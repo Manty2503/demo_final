@@ -12,21 +12,12 @@ export const tasks = pgTable("tasks", {
 
 
 
-export const interviews = pgTable('interviews', {
-  id: serial('id').primaryKey(),
-  userId: text('user_id').notNull(),
-  questions: json('questions').notNull(),
-  answers: json('answers').$type<Array<{
-    text: string;
-    timestamp: string;
-  }>>().notNull(),
-  summary: text('summary').notNull(),
-  scores: json('scores').$type<{
-    communication: number;
-    problemSolving: number;
-    technicalDepth: number;
-    cultureFit: number;
-    clarityBrevity: number;
-  }>().notNull(),
-  createdAt: timestamp('created_at').defaultNow(),
+export const interviewAnswers = pgTable("interview_answers", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(), // You can set this dynamically
+  question: text("question").notNull(),
+  transcript: text("transcript").notNull(),
+  audioUrl: text("audio_url"), // optional if uploaded to S3 or local storage
+  createdAt: timestamp("created_at").defaultNow(),
 });
+
