@@ -24,6 +24,9 @@ const evaluationSchema = z.object({
   }),
 });
 
+// 👇 infer the TypeScript type from Zod schema
+type Evaluation = z.infer<typeof evaluationSchema>;
+
 export default function InterviewSession() {
   const [status, setStatus] = useState<"idle" | "active" | "complete">("idle");
   const [currentQuestion, setCurrentQuestion] = useState(0);
@@ -31,7 +34,7 @@ export default function InterviewSession() {
   const [answers, setAnswers] = useState<
     Array<{ text: string; timestamp: string }>
   >([]);
-  const [evaluation, setEvaluation] = useState<any>(null);
+  const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [isChannelReady, setIsChannelReady] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);

@@ -13,8 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
-import { useTheme } from "next-themes";
 import { ModeToggle } from "@/components/mode-toggle";
 import { Plus, Edit, Trash, Calendar, Flag, CheckCircle } from "lucide-react"; // Import icons
 import { motion } from "framer-motion"; // For animations
@@ -32,7 +30,6 @@ type Task = {
 
 export default function TasksPage() {
   const { user } = useUser();
-  const { theme } = useTheme();
   const [title, setTitle] = useState<string>("");
   const [description, setDescription] = useState<string>("");
   const [dueDate, setDueDate] = useState<string>("");

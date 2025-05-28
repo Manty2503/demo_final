@@ -1,8 +1,5 @@
-import { OpenAI } from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+
 
 export async function createSession() {
   const response = await fetch('https://api.openai.com/v1/realtime/sessions', {
