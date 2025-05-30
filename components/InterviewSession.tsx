@@ -1,182 +1,205 @@
-// app/interview/InterviewSession.tsx
 "use client";
 
 import { evaluateAnswers, Evaluation } from "@/actions/evaluateInterview";
 import { saveInterview } from "@/actions/saveInterview";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
-const QUESTIONS = [
-  "Tell me about yourself and your experience.",
-  "Describe a challenging problem you've solved.",
-  "How do you approach learning new technologies?",
-  "Why are you interested in this position?",
-];
-
-export default function InterviewSession() {
-  const [currentQuestion, setCurrentQuestion] = useState(0);
-  const [status, setStatus] = useState<"idle" | "recording" | "complete">(
-    "idle"
-  );
-  const [answers, setAnswers] = useState<
-    Array<{
-      question: string;
-      audio: Blob;
-      transcript: string;
-      timestamp: string;
-    }>
-  >([]);
+export default function TestPage() {
+  const [status, setStatus] = useState("Idle");
+  const [currentQuestion, setCurrentQuestion] = useState("");
+  const [currentAnswer, setCurrentAnswer] = useState("");
+  const [questions, setQuestions] = useState<string[]>([]);
+  const [answers, setAnswers] = useState<string[]>([]);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
 
-  const speakText = (text: string, onEnd?: () => void) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    utterance.volume = 1;
-    if (onEnd) utterance.onend = onEnd;
-    window.speechSynthesis.speak(utterance);
-  };
+  const speakCountRef = useRef(0);
 
-  let mediaRecorder: MediaRecorder | null = null;
-  let audioChunks: Blob[] = [];
+  const startTest = async () => {
+    console.clear();
+    console.log("[🟢 START] Initializing interview session...");
+    setStatus("Requesting microphone...");
 
-  const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
-    const formData = new FormData();
-    formData.append("file", audioBlob, "answer.webm");
-    formData.append("model", "whisper-1");
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const audioEl = document.createElement("audio");
+    audioEl.autoplay = true;
 
-    const response = await fetch("/api/transcribe", {
+    console.log("[🎙️ MIC] Microphone access granted");
+
+    setStatus("Creating OpenAI session...");
+    const sessionRes = await fetch("/api/session", { method: "POST" });
+    const { client_secret } = await sessionRes.json();
+    console.log("[🔐 SESSION] client_secret:", client_secret);
+
+    const pc = new RTCPeerConnection();
+    stream.getTracks().forEach((track) => pc.addTrack(track));
+
+    pc.ontrack = (event) => {
+      console.log("[🔈 AUDIO TRACK] Assistant voice track received");
+      audioEl.srcObject = event.streams[0];
+    };
+
+    const dc = pc.createDataChannel("chat");
+
+    dc.onopen = () => {
+      console.log("[✅ DataChannel OPEN]");
+
+      const sessionUpdate = {
+        type: "session.update",
+        session: {
+          modalities: ["audio", "text"],
+          input_audio_transcription: {
+            model: "whisper-1",
+          },
+        },
+      };
+      dc.send(JSON.stringify(sessionUpdate));
+      console.log("[📤 SENT] session.update");
+
+      const msg = {
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `
+You are an AI interviewer. Your only job is to ask exactly 4 technical questions on the topic: "Machine Learning".
+
+Rules:
+- Ask one question at a time.
+- Wait silently for my answer.
+- Do not explain, evaluate, confirm or respond to my answers.
+- Ask the next question only after I answer the current one.
+- Speak and display only the question itself.
+Begin now.`,
+            },
+          ],
+        },
+      };
+      dc.send(JSON.stringify(msg));
+      dc.send(JSON.stringify({ type: "response.create" }));
+      console.log("[📤 SENT] topic prompt");
+    };
+
+    dc.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        if (
+          msg.type === "response.audio_transcript.done" &&
+          speakCountRef.current < 4
+        ) {
+          const question = msg.transcript;
+          setCurrentQuestion(question);
+          setQuestions((prev) => [...prev, question]);
+          console.log("[🎤 GPT QUESTION]:", question);
+        }
+
+        if (
+          msg.type === "conversation.item.input_audio_transcription.completed"
+        ) {
+          const answer = msg.transcript;
+          setCurrentAnswer(answer);
+          setAnswers((prev) => [...prev, answer]);
+          console.log("[🧏‍♂️ YOU SAID]:", answer);
+        }
+
+        if (msg.type === "output_audio_buffer.stopped") {
+          const newCount = speakCountRef.current + 1;
+          speakCountRef.current = newCount;
+          console.log(`[🔊 GPT Finished Speaking] (${newCount}/4)`);
+          if (newCount === 5) {
+            console.log("[✅ COMPLETE] All 4 questions spoken");
+            setStatus("complete");
+          }
+        }
+
+        console.log("[📥 RAW]", msg.type, msg);
+      } catch (err) {
+        console.warn("[⚠️ JSON PARSE ERROR]", event.data, err);
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    setStatus("Negotiating SDP...");
+    const sdpRes = await fetch("/api/sdp", {
       method: "POST",
-      body: formData,
+      body: offer.sdp,
+      headers: { "Content-Type": "application/sdp" },
     });
 
-    const data = await response.json();
-    return data.text;
-  };
-
-  
-
-  const startRecordingAnswer = (onStop: (audioBlob: Blob) => void) => {
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-      mediaRecorder = new MediaRecorder(stream);
-      audioChunks = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-        onStop(audioBlob);
-        stream.getTracks().forEach((track) => track.stop());
-      };
-
-      mediaRecorder.start();
-      setTimeout(() => mediaRecorder?.stop(), 10000);
-    });
-  };
-
-  const askQuestion = (index: number) => {
-    const questionText = QUESTIONS[index];
-    setStatus("recording");
-
-    speakText(questionText, () => {
-      startRecordingAnswer(async (audioBlob) => {
-        const timestamp = new Date().toISOString();
-        const transcript = await transcribeAudio(audioBlob);
-
-        setAnswers((prev) => [
-          ...prev,
-          { question: questionText, audio: audioBlob, transcript, timestamp },
-        ]);
-
-        if (index + 1 < QUESTIONS.length) {
-          setTimeout(() => askQuestion(index + 1), 1000);
-        } else {
-          setStatus("complete");
-        }
-      });
-    });
-
-    setCurrentQuestion(index);
+    const answerSDP = await sdpRes.text();
+    await pc.setRemoteDescription({ type: "answer", sdp: answerSDP });
+    setStatus("Connected and interviewing...");
+    console.log("[📡 SDP negotiation complete]");
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-white">
-      <h1 className="text-3xl font-bold text-indigo-700 mb-4">
-        AI Interviewer
-      </h1>
-      {status === "idle" && (
+    <div className="p-6 max-w-2xl mx-auto">
+      <h1 className="text-xl font-bold mb-4">GPT-4o Interview Session</h1>
+
+      {status !== "complete" ? (
         <button
-          className="bg-indigo-600 text-white px-6 py-3 rounded shadow"
-          onClick={() => askQuestion(0)}
+          onClick={startTest}
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
         >
-          Start Interview
+          Start Session
+        </button>
+      ) : (
+        <button
+          onClick={async () => {
+            await saveInterview(
+              "user-123",
+              answers.map((a, idx) => ({
+                question: questions[idx],
+                transcript: a,
+                audioUrl: null,
+              }))
+            );
+            const evaluationResult = await evaluateAnswers(answers, questions);
+            setEvaluation(evaluationResult);
+          }}
+          className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
+        >
+          Evaluate
         </button>
       )}
 
-      {status !== "idle" && (
-        <div className="text-center space-y-4">
-          <h2 className="text-xl text-gray-700">
-            Question {currentQuestion + 1} of {QUESTIONS.length}
-          </h2>
-          <p className="italic text-gray-600">{QUESTIONS[currentQuestion]}</p>
-          {status === "recording" && (
-            <p className="text-red-500">Recording your answer...</p>
-          )}
-          {status === "complete" && (
-            <div className="text-center space-y-4">
-              <p className="text-green-600">Interview complete. Thanks!</p>
-              <button
-                className="mt-4 px-5 py-2 bg-indigo-600 text-white rounded shadow"
-                onClick={async () => {
-                  const finalTranscriptList = answers.map((a) => a.transcript);
-                  await saveInterview(
-                    "user-123",
-                    answers.map((a) => ({
-                      question: a.question,
-                      transcript: a.transcript,
-                      audioUrl: null,
-                    }))
-                  );
-                  const evaluationResult = await evaluateAnswers(
-                    finalTranscriptList,
-                    QUESTIONS
-                  );
-                  setEvaluation(evaluationResult);
-                }}
-              >
-                Evaluate Interview
-              </button>
-            </div>
-          )}
+      <p className="mt-4 text-sm text-gray-700">Status: {status}</p>
+
+      {status !== "complete" && (
+        <div className="mt-6">
+          <h2 className="text-lg font-semibold">Current Turn</h2>
+          <div className="p-4 rounded-lg border border-gray-300 mt-4 bg-white shadow-sm">
+            <p className="text-blue-800 font-semibold">
+              <strong>Question:</strong> {currentQuestion || "Waiting..."}
+            </p>
+            <p className="text-green-800 mt-2">
+              <strong>Previous Answer:</strong> {currentAnswer || "Waiting..."}
+            </p>
+          </div>
         </div>
       )}
 
-      {status === "complete" && answers.length > 0 && (
-        <div className="mt-8 w-full max-w-xl">
-          <h2 className="text-xl font-semibold text-indigo-700 mb-4">
-            Your Responses
-          </h2>
-          <ul className="space-y-4">
-            {answers.map((item, idx) => (
-              <li key={idx} className="p-4 border border-gray-200 rounded">
-                <p className="font-medium text-gray-800">Q: {item.question}</p>
-                <p className="text-sm text-gray-500 mb-2">
-                  Transcript: {item.transcript}
-                </p>
-                <audio controls className="mt-2 w-full">
-                  <source
-                    src={URL.createObjectURL(item.audio)}
-                    type="audio/webm"
-                  />
-                  Your browser does not support the audio element.
-                </audio>
-              </li>
-            ))}
-          </ul>
+      {status === "complete" && (
+        <div className="mt-6 border-t pt-4">
+          <h2 className="text-lg font-semibold mb-2">Full Conversation</h2>
+          {questions.map((q, i) => (
+            <div
+              key={i}
+              className="p-4 mb-4 border border-gray-300 rounded-lg bg-white shadow-sm"
+            >
+              <p className="text-blue-800 font-semibold mb-1">
+                <strong>Q{i + 1}:</strong> {q}
+              </p>
+              <p className="text-green-800">
+                <strong>A:</strong> {answers[i] || "No answer"}
+              </p>
+            </div>
+          ))}
         </div>
       )}
 
